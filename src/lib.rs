@@ -72,6 +72,16 @@ pub struct Rect {
     pub height: NonZeroU32,
 }
 
+/// How the highest order 8 bits of each pixel in a [`Buffer`] are read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AlphaMode {
+    /// They are ignored, and the window is opaque.
+    #[default]
+    Ignored,
+    /// They are alpha, and red, green and blue are already multiplied by it.
+    Premultiplied,
+}
+
 /// A surface for drawing to a window with software buffers.
 #[derive(Debug)]
 pub struct Surface<D, W> {
@@ -113,6 +123,25 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> Surface<D, W> {
     /// of the window.
     pub fn resize(&mut self, width: NonZeroU32, height: NonZeroU32) -> Result<(), SoftBufferError> {
         self.surface_impl.resize(width, height)
+    }
+
+    /// Whether this surface can present buffers in `alpha_mode`.
+    ///
+    /// [`AlphaMode::Ignored`] works everywhere, [`AlphaMode::Premultiplied`] only on Wayland.
+    pub fn supports_alpha_mode(&self, alpha_mode: AlphaMode) -> bool {
+        self.surface_impl.supports_alpha_mode(alpha_mode)
+    }
+
+    /// Read the highest order 8 bits of each pixel as `alpha_mode` from the next
+    /// [`Surface::buffer_mut`] on.
+    ///
+    /// Fails with [`SoftBufferError::Unimplemented`] if the surface does not support it.
+    pub fn set_alpha_mode(&mut self, alpha_mode: AlphaMode) -> Result<(), SoftBufferError> {
+        if !self.supports_alpha_mode(alpha_mode) {
+            return Err(SoftBufferError::Unimplemented);
+        }
+        self.surface_impl.set_alpha_mode(alpha_mode);
+        Ok(())
     }
 
     /// Copies the window contents into a buffer.
@@ -176,11 +205,18 @@ impl<D: HasDisplayHandle, W: HasWindowHandle> HasWindowHandle for Surface<D, W> 
 /// green channel, and then the blue channel in the lowest-order 8 bits. See the examples for
 /// one way to build this format using bitwise operations.
 ///
+/// With [`AlphaMode::Premultiplied`], the highest order 8 bits are alpha instead, and red, green
+/// and blue are already multiplied by it.
+///
 /// --------
 ///
 /// Pixel format (`u32`):
 ///
 /// 00000000RRRRRRRRGGGGGGGGBBBBBBBB
+///
+/// With [`AlphaMode::Premultiplied`]:
+///
+/// AAAAAAAARRRRRRRRGGGGGGGGBBBBBBBB
 ///
 /// 0: Bit is 0
 /// R: Red channel
