@@ -1,7 +1,7 @@
 use crate::{
     backend_interface::*,
     error::{InitError, SwResultExt},
-    util, Rect, SoftBufferError,
+    util, AlphaMode, Rect, SoftBufferError,
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use std::{
@@ -81,6 +81,7 @@ pub struct WaylandImpl<D: ?Sized, W: ?Sized> {
     surface: Option<wl_surface::WlSurface>,
     buffers: Option<(WaylandBuffer, WaylandBuffer)>,
     size: Option<(NonZeroI32, NonZeroI32)>,
+    format: wl_shm::Format,
 
     /// The pointer to the window object.
     ///
@@ -178,6 +179,7 @@ impl<D: HasDisplayHandle + ?Sized, W: HasWindowHandle> SurfaceInterface<D, W>
             surface: Some(surface),
             buffers: Default::default(),
             size: None,
+            format: buffer::shm_format(AlphaMode::Ignored),
             window_handle: window,
         })
     }
@@ -197,6 +199,14 @@ impl<D: HasDisplayHandle + ?Sized, W: HasWindowHandle> SurfaceInterface<D, W>
             .ok_or(SoftBufferError::SizeOutOfRange { width, height })?,
         );
         Ok(())
+    }
+
+    fn supports_alpha_mode(&self, _alpha_mode: AlphaMode) -> bool {
+        true
+    }
+
+    fn set_alpha_mode(&mut self, alpha_mode: AlphaMode) {
+        self.format = buffer::shm_format(alpha_mode);
     }
 
     fn buffer_mut(&mut self) -> Result<BufferImpl<'_, D, W>, SoftBufferError> {
@@ -223,7 +233,7 @@ impl<D: HasDisplayHandle + ?Sized, W: HasWindowHandle> SurfaceInterface<D, W>
             }
 
             // Resize, if buffer isn't large enough
-            back.resize(width.get(), height.get());
+            back.resize(width.get(), height.get(), self.format);
         } else {
             // Allocate front and back buffer
             self.buffers = Some((
@@ -231,12 +241,14 @@ impl<D: HasDisplayHandle + ?Sized, W: HasWindowHandle> SurfaceInterface<D, W>
                     &self.display.shm,
                     width.get(),
                     height.get(),
+                    self.format,
                     &self.display.qh,
                 ),
                 WaylandBuffer::new(
                     &self.display.shm,
                     width.get(),
                     height.get(),
+                    self.format,
                     &self.display.qh,
                 ),
             ));

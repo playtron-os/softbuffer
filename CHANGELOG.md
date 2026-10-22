@@ -1,5 +1,7 @@
 # Unreleased
 
+- Add `AlphaMode` and `Surface::set_alpha_mode`, so a Wayland surface can present premultiplied ARGB8888 and keep its transparency.
+
 # 0.4.7
 
 - Fix documentation building on `docs.rs`.

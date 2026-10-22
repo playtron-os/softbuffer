@@ -15,6 +15,7 @@ use wayland_client::{
 };
 
 use super::State;
+use crate::AlphaMode;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn create_memfile() -> File {
@@ -58,6 +59,15 @@ fn create_memfile() -> File {
     panic!("Failed to generate non-existent shm name")
 }
 
+/// The `wl_shm` format whose highest order byte is read as `alpha_mode`.
+pub(super) fn shm_format(alpha_mode: AlphaMode) -> wl_shm::Format {
+    match alpha_mode {
+        AlphaMode::Ignored => wl_shm::Format::Xrgb8888,
+        // Wayland reads ARGB8888 as premultiplied.
+        AlphaMode::Premultiplied => wl_shm::Format::Argb8888,
+    }
+}
+
 // Round size to use for pool for given dimensions, rounding up to power of 2
 fn get_pool_size(width: i32, height: i32) -> i32 {
     ((width * height * 4) as u32).next_power_of_two() as i32
@@ -77,12 +87,19 @@ pub(super) struct WaylandBuffer {
     buffer: wl_buffer::WlBuffer,
     pub width: i32,
     pub height: i32,
+    format: wl_shm::Format,
     released: Arc<AtomicBool>,
     pub age: u8,
 }
 
 impl WaylandBuffer {
-    pub fn new(shm: &wl_shm::WlShm, width: i32, height: i32, qh: &QueueHandle<State>) -> Self {
+    pub fn new(
+        shm: &wl_shm::WlShm,
+        width: i32,
+        height: i32,
+        format: wl_shm::Format,
+        qh: &QueueHandle<State>,
+    ) -> Self {
         // Calculate size to use for shm pool
         let pool_size = get_pool_size(width, height);
 
@@ -94,15 +111,7 @@ impl WaylandBuffer {
         // Create wayland shm pool and buffer
         let pool = shm.create_pool(tempfile.as_fd(), pool_size, qh, ());
         let released = Arc::new(AtomicBool::new(true));
-        let buffer = pool.create_buffer(
-            0,
-            width,
-            height,
-            width * 4,
-            wl_shm::Format::Xrgb8888,
-            qh,
-            released.clone(),
-        );
+        let buffer = pool.create_buffer(0, width, height, width * 4, format, qh, released.clone());
 
         Self {
             qh: qh.clone(),
@@ -113,14 +122,15 @@ impl WaylandBuffer {
             buffer,
             width,
             height,
+            format,
             released,
             age: 0,
         }
     }
 
-    pub fn resize(&mut self, width: i32, height: i32) {
-        // If size is the same, there's nothing to do
-        if self.width != width || self.height != height {
+    pub fn resize(&mut self, width: i32, height: i32, format: wl_shm::Format) {
+        // If size and format are the same, there's nothing to do
+        if self.width != width || self.height != height || self.format != format {
             // Destroy old buffer
             self.buffer.destroy();
 
@@ -139,12 +149,13 @@ impl WaylandBuffer {
                 width,
                 height,
                 width * 4,
-                wl_shm::Format::Xrgb8888,
+                format,
                 &self.qh,
                 self.released.clone(),
             );
             self.width = width;
             self.height = height;
+            self.format = format;
         }
     }
 
@@ -197,5 +208,19 @@ impl Dispatch<wl_buffer::WlBuffer, Arc<AtomicBool>> for State {
         if let wl_buffer::Event::Release = event {
             released.store(true, Ordering::SeqCst);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn premultiplied_alpha_is_argb8888() {
+        assert_eq!(shm_format(AlphaMode::Ignored), wl_shm::Format::Xrgb8888);
+        assert_eq!(
+            shm_format(AlphaMode::Premultiplied),
+            wl_shm::Format::Argb8888
+        );
     }
 }
